@@ -64,6 +64,18 @@
   .tag.w{background:var(--red-soft);color:var(--red)}
   .tag.s{background:#FFF4DC;color:#B87A10}
   .tag.ok{background:#EAF6EE;color:var(--green)}
+  .tag.up{background:#EAF6EE;color:var(--green)}
+  .tag.dn{background:var(--red-soft);color:var(--red)}
+  /* ---- 行情图表 ---- */
+  .bigprice{font-size:30px;font-weight:700;color:var(--ink);margin:6px 0 2px}
+  .bigprice small{font-size:14px;color:var(--sub);font-weight:400}
+  .chart{display:flex;align-items:flex-end;gap:6px;height:150px;padding:8px 4px 0;overflow-x:auto}
+  .barwrap{flex:0 0 44px;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;height:100%;min-width:40px}
+  .barval{font-size:11px;font-weight:600;color:var(--ink);margin-bottom:3px}
+  .bar{width:26px;border-radius:6px 6px 2px 2px;min-height:18px}
+  .barlab{font-size:10px;color:var(--sub);margin-top:4px;white-space:nowrap}
+  .barn{font-size:9px;color:#C5B79F}
+  button.mini.active{background:var(--brand);border-color:var(--brand);color:#fff}
   .empty{text-align:center;color:#B49B72;padding:26px 0;font-size:14px}
   .hint{font-size:12px;color:#A78B5F;margin-top:9px;line-height:1.7}
   .del{color:#C96A6A;cursor:pointer;font-size:13px;background:none;border:none;text-decoration:underline}
@@ -98,7 +110,7 @@ const today=()=>new Date().toISOString().slice(0,10);
 const r2=n=>Math.round(n*100)/100;
 const fmt=n=>{const v=+n;return (v<0?"-":"")+Math.abs(v).toLocaleString("zh-CN",{maximumFractionDigits:2})};
 const monthOf=d=>d.slice(0,7);
-const CN={'flock':'🐔 栏群','feed':'🌾 饲料物料','finance':'💰 收支台账','sales':'🥚 鸡蛋销售','vax':'💉 疫苗防疫','plan':'🗓 免疫计划','dash':'📊 总览','bak':'💾 备份'};
+const CN={'flock':'🐔 栏群','feed':'🌾 饲料物料','finance':'💰 收支台账','sales':'🥚 鸡蛋销售','vax':'💉 疫苗防疫','plan':'🗓 免疫计划','stat':'📈 行情','dash':'📊 总览','bak':'💾 备份'};
 
 // ================= 选项库 =================
 const FEED_ITEMS=["玉米","豆粕","预混料","麦麸","石粉","磷酸氢钙","食盐","多维/维生素","鱼肝油"];
@@ -155,25 +167,37 @@ function buyerList(){return uniq(S.sales.map(r=>r.buyer))}
 function datalistTag(id,items){return `<datalist id="${id}">${items.map(i=>`<option>${i}</option>`).join('')}</datalist>`}
 
 // demo 数据 (?demo=1 仅供预览, 不落盘)
-if(new URLSearchParams(location.search).get("demo")==="1"){
+function loadDemo(){
   S.flock=[{id:uid(),date:"2026-09-01",type:"进雏/上鸡",house:"1号舍",qty:5000,note:"正常"},{id:uid(),date:"2026-09-20",type:"死淘",house:"1号舍",qty:-23,note:"弱雏淘汰"}];
   S.feedStock={"玉米":3000,"豆粕":800,"预混料":150};
-  S.feedLog=[{id:uid(),date:"2026-09-05",item:"玉米",dir:"入库",qty:5000,unit:"斤",jin:5000,price:"1.35",note:"新粮上市"},{id:uid(),date:"2026-09-30",item:"玉米",dir:"出库(饲喂)",qty:2000,unit:"斤",jin:2000,price:"",note:"现款采购"}];
-  S.sales=[{id:uid(),date:"2026-10-01",channel:"批发",qty:800,unit:"斤",price:4.8,buyer:"郑州贸易商",note:"现款"},{id:uid(),date:"2026-10-02",channel:"自提点",qty:96,unit:"枚",price:1.2,buyer:"阳光小区",note:"现款"}];
+  S.feedLog=[{id:uid(),date:"2026-06-15",item:"玉米",dir:"入库",qty:6000,unit:"斤",jin:6000,price:"1.42",note:"老粮尾货"},{id:uid(),date:"2026-07-20",item:"玉米",dir:"入库",qty:5000,unit:"斤",jin:5000,price:"1.40",note:"东北粮"},{id:uid(),date:"2026-08-18",item:"玉米",dir:"入库",qty:5000,unit:"斤",jin:5000,price:"1.38",note:"现款采购"},{id:uid(),date:"2026-08-20",item:"豆粕",dir:"入库",qty:2000,unit:"斤",jin:2000,price:"1.85",note:"现货"},{id:uid(),date:"2026-09-05",item:"玉米",dir:"入库",qty:5000,unit:"斤",jin:5000,price:"1.35",note:"新粮上市"},{id:uid(),date:"2026-09-25",item:"豆粕",dir:"入库",qty:2000,unit:"斤",jin:2000,price:"1.78",note:"现货"},{id:uid(),date:"2026-09-30",item:"玉米",dir:"出库(饲喂)",qty:2000,unit:"斤",jin:2000,price:"",note:"现款采购"}];
+  S.sales=[{id:uid(),date:"2026-08-05",channel:"批发",qty:1000,unit:"斤",price:4.6,buyer:"郑州贸易商",note:"现款"},{id:uid(),date:"2026-09-08",channel:"批发",qty:900,unit:"斤",price:4.7,buyer:"郑州贸易商",note:"现款"},{id:uid(),date:"2026-09-20",channel:"自提点",qty:200,unit:"斤",price:5.2,buyer:"阳光小区",note:"现款"},{id:uid(),date:"2026-10-01",channel:"批发",qty:800,unit:"斤",price:4.8,buyer:"郑州贸易商",note:"现款"},{id:uid(),date:"2026-10-02",channel:"自提点",qty:96,unit:"枚",price:1.2,buyer:"阳光小区",note:"现款"}];
   S.finance=[{id:uid(),date:"2026-10-02",cat:"饲料原料",item:"玉米",kind:"支",amount:6750,note:"赊账月结"},{id:uid(),date:"2026-10-03",cat:"人工工资",item:"饲养员工资",kind:"支",amount:4500,note:"现款"},{id:uid(),date:"2026-10-03",cat:"鸡苗/淘鸡",item:"淘鸡收入",kind:"收",amount:2800,note:"现款"}];
   S.vaccines=[{id:uid(),date:"2026-09-10",name:"新城疫IV系(Lasota)",house:"1号舍",dose:"2倍量",way:"饮水",next:"2026-10-05",note:"免疫顺利"},{id:uid(),date:"2026-08-15",name:"禽流感H9油苗",house:"1号舍",dose:"0.5ml",way:"注射",next:"2026-10-10",note:"免疫顺利"}];
 }
+if(new URLSearchParams(location.search).get("demo")==="1")loadDemo();
 
-// ================= 登录锁 (SHA-256 本地散列, 无服务器) =================
-async function sha256(s){const b=await crypto.subtle.digest("SHA-256",new TextEncoder().encode(s));return [...new Uint8Array(b)].map(x=>x.toString(16).padStart(2,"0")).join("")}
+// ================= 登录锁 (SHA-256 本地散列, 无服务器; 支持密保问题找回) =================
+async function sha256(s){const b=await crypto.subtle.digest("SHA-256",new TextEncoder().encode(s.trim().toLowerCase()));return [...new Uint8Array(b)].map(x=>x.toString(16).padStart(2,"0")).join("")}
 function loggedIn(){return sessionStorage.getItem("gx_login")==="1"}
 function hasAuth(){return S.auth&&S.auth.hash}
-async function tryLogin(e){e.preventDefault();const pw=new FormData(e.target).get("pw");const h=await sha256(pw);
+function hasSecQ(){return hasAuth()&&S.auth.q&&S.auth.a}
+async function tryLogin(e){e.preventDefault();const fd=new FormData(e.target);const pw=fd.get("pw");const h=await sha256(pw);
   if(hasAuth()){if(h===S.auth.hash){sessionStorage.setItem("gx_login","1");bootApp()}else{document.getElementById("login_err").style.display="";}}
   else{if(!pw||pw.length<4){document.getElementById("login_err").textContent="密码至少4位";document.getElementById("login_err").style.display="";return}
-    if(pw!==new FormData(e.target).get("pw2")){document.getElementById("login_err").textContent="两次输入不一致";document.getElementById("login_err").style.display="";return}
-    S.auth={hash:h,set:today()};save();sessionStorage.setItem("gx_login","1");bootApp()}}
-async function resetPw(){if(!confirm("重置密码会清空全部数据(防止陌生人解锁), 确定吗?"))return;if(!confirm("再次确认: 清空数据并重设密码?"))return;localStorage.removeItem(KEY);sessionStorage.removeItem("gx_login");location.reload()}
+    if(pw!==fd.get("pw2")){document.getElementById("login_err").textContent="两次输入不一致";document.getElementById("login_err").style.display="";return}
+    const q=fd.get("secq"),a=fd.get("seca");
+    if(!q||!a||!a.trim()){document.getElementById("login_err").textContent="请设置密保问题和答案(用于忘密码找回)";document.getElementById("login_err").style.display="";return}
+    S.auth={hash:h,set:today(),q,a:await sha256(a)};save();sessionStorage.setItem("gx_login","1");bootApp()}}
+async function recoverPw(e){e.preventDefault();const fd=new FormData(e.target);const a=fd.get("ra");
+  const h=await sha256(a);
+  if(!hasSecQ()||h!==S.auth.a){document.getElementById("rec_err").textContent="答案不对";document.getElementById("rec_err").style.display="";return}
+  const p1=fd.get("np1"),p2=fd.get("np2");
+  if(!p1||p1.length<4){document.getElementById("rec_err").textContent="新密码至少4位";document.getElementById("rec_err").style.display="";return}
+  if(p1!==p2){document.getElementById("rec_err").textContent="两次输入的新密码不一致";document.getElementById("rec_err").style.display="";return}
+  S.auth.hash=await sha256(p1);save();sessionStorage.setItem("gx_login","1");bootApp()}
+function showRecover(){document.getElementById("rec_box").style.display="";document.getElementById("login_err").style.display="none"}
+async function resetPw(){if(!confirm("重置密码会清空全部数据(账本无法恢复), 仅在密保答案也忘了时使用, 确定吗?"))return;if(!confirm("再次确认: 清空全部数据并重设密码?"))return;localStorage.removeItem(KEY);sessionStorage.removeItem("gx_login");location.reload()}
 function lockNow(){sessionStorage.removeItem("gx_login");location.reload()}
 function loginScreen(msg){document.getElementById("main").innerHTML=`<div style="max-width:360px;margin:8vh auto 0">
   <section class="panel" style="text-align:center;padding:28px 22px">
@@ -183,21 +207,38 @@ function loginScreen(msg){document.getElementById("main").innerHTML=`<div style=
     <form onsubmit="tryLogin(event)" style="flex-direction:column;align-items:stretch;gap:10px">
       <input type="password" name="pw" id="pw1" placeholder="密码" style="text-align:center;font-size:17px;letter-spacing:2px" required>
       <input type="password" name="pw2" id="pw2" placeholder="再输一遍(首次设置时)" style="text-align:center;font-size:17px;letter-spacing:2px;display:${hasAuth()?"none":"block"}">
+      ${!hasAuth()?`<select name="secq" style="padding:10px;border:1.5px solid var(--line);border-radius:10px;font-size:15px;background:#fff">
+        <option value="我母亲的姓名">密保: 我母亲的姓名</option>
+        <option value="我出生的村庄">密保: 我出生的村庄</option>
+        <option value="第一辆车的车牌号">密保: 第一辆车的车牌号</option>
+        <option value="最爱吃的一道菜">密保: 最爱吃的一道菜</option>
+        <option value="自定义问题">自定义问题…</option></select>
+      <input name="seca" placeholder="密保答案(忘密码时凭它找回)" style="text-align:center;font-size:15px" required>`:""}
       <button class="go" style="width:100%">${hasAuth()?"解锁":"设置密码并进入"}</button>
     </form>
     <div id="login_err" style="display:none;color:var(--red);font-size:13px;margin-top:8px">密码不对, 再想想</div>
-    ${hasAuth()?`<div style="margin-top:14px"><button class="mini" onclick="resetPw()">忘记密码? 重置(清空数据)</button></div>`:""}
-    <div class="hint" style="text-align:left;margin-top:14px">密码只存在本机浏览器里, 没有找回后门; 忘了只能清空重来, 务必记牢。</div>
+    <div id="rec_box" style="display:none;margin-top:14px;border-top:1px dashed var(--line);padding-top:12px">
+      <div style="font-size:13px;color:var(--sub);margin-bottom:8px">🔐 ${hasSecQ()?`密保问题: ${S.auth.q}`:"尚未设置密保问题(旧版密码无法找回, 只能重置)"}</div>
+      ${hasSecQ()?`<form onsubmit="recoverPw(event)" style="flex-direction:column;align-items:stretch;gap:8px">
+        <input name="ra" placeholder="密保答案" style="text-align:center;font-size:15px" required>
+        <input type="password" name="np1" placeholder="新密码(至少4位)" style="text-align:center;font-size:15px" required>
+        <input type="password" name="np2" placeholder="再输一遍新密码" style="text-align:center;font-size:15px" required>
+        <button class="go" style="width:100%;background:var(--green)">验证密保, 重设密码</button>
+      </form>`:`<button class="mini" onclick="resetPw()">清空数据并重设密码</button>`}
+      <div id="rec_err" style="display:none;color:var(--red);font-size:13px;margin-top:8px">答案不对</div>
+    </div>
+    ${hasAuth()?`<div style="margin-top:12px"><button class="mini" onclick="showRecover()">忘记密码?</button></div>`:""}
+    <div class="hint" style="text-align:left;margin-top:14px">密码只存本机, 密保答案也只存本机(散列)。${hasAuth()?"忘了密码点「忘记密码」答密保题即可重设, 账本不动。":"密保问题用于日后忘密码找回, 务必填一个忘不了的答案。"}</div>
   </section></div>`;
   document.getElementById("nav").style.display="none"}
 function bootApp(){document.getElementById("nav").style.display="";render()}
 
 // ================= 框架 =================
-const TABS=["dash","flock","feed","finance","sales","vax","plan","bak"];
+const TABS=["dash","flock","feed","finance","sales","vax","plan","stat","bak"];
 let tab="dash";
 function renderNav(){document.getElementById("nav").innerHTML=TABS.map(t=>`<button class="${t===tab?'active':''}" onclick="go('${t}')">${CN[t]}</button>`).join("")}
 function go(t){tab=t;renderNav();render()}
-function render(){const m=document.getElementById("main");m.innerHTML=({dash:vDash,flock:vFlock,feed:vFeed,finance:vFin,sales:vSales,vax:vVax,plan:vPlan,bak:vBak})[tab]();afterRender()}
+function render(){const m=document.getElementById("main");m.innerHTML=({dash:vDash,flock:vFlock,feed:vFeed,finance:vFin,sales:vSales,vax:vVax,plan:vPlan,stat:vStat,bak:vBak})[tab]();afterRender()}
 
 // ================= 计算层 =================
 function stockCount(){return S.flock.reduce((a,r)=>a+r.qty,0)}
@@ -386,6 +427,77 @@ function doPlan(day){const it=VAX_PLAN.find(x=>x.d===day);if(!it)return;const du
   S.plan.done=S.plan.done||[];if(!S.plan.done.includes(day))S.plan.done.push(day);save();render()}
 function undoPlan(day){S.plan.done=(S.plan.done||[]).filter(x=>x!==day);save();render()}
 
+// ================= 行情统计 =================
+// 原料价: feedLog 里入库且填了单价 (元/斤); 鸡蛋价: sales (元/斤, 枚/件折算或单独看)
+function periodKey(date,mode){const y=date.slice(0,4),m=+date.slice(5,7);
+  if(mode==="月")return date.slice(0,7);
+  if(mode==="季")return y+" Q"+Math.ceil(m/3);
+  return y}
+function priceStats(list,dateF,pF,mode,weightF){ // 加权平均: 权重=数量
+  const t={};
+  for(const r of list){const p=+pF(r);if(!p||p<=0)continue;const k=periodKey(dateF(r),mode);
+    (t[k]=t[k]||{wsum:0,w:0,n:0});t[k].wsum+=p*(weightF?weightF(r):1);t[k].w+=(weightF?weightF(r):1);t[k].n++}
+  return Object.keys(t).sort().map(k=>({k,avg:r2(t[k].wsum/t[k].w),n:t[k].n}))
+}
+function deltaLine(arr){ // 相邻两期涨跌
+  if(!arr||arr.length<2)return "";
+  const a=arr[arr.length-2].avg,b=arr[arr.length-1].avg;
+  const pct=a?r2((b-a)/a*100):0;
+  return `<span class="tag ${b>=a?'up':'dn'}">${b>=a?"▲":"▼"} ${Math.abs(pct)}%</span> 较上期${b>=a?"涨":"跌"} ${fmt(r2(Math.abs(b-a)))} 元`}
+function priceChart(arr,unit,color){ // 纯CSS柱状图, 无外部库
+  if(!arr.length)return `<div class="empty">暂无带单价的数据 — 去「饲料物料」入库时填单价, 或「鸡蛋销售」记每笔单价</div>`;
+  const max=Math.max(...arr.map(x=>x.avg)),min=Math.min(...arr.map(x=>x.avg));
+  const span=(max-min)||1;
+  const bars=arr.map((x,i)=>{const h=18+Math.round((x.avg-min)/span*82); // 18%~100%高度
+    const up=i>0&&x.avg>=arr[i-1].avg;
+    return `<div class="barwrap"><div class="barval">${x.avg}</div><div class="bar" style="height:${h}%;background:${up?color:'#CC8B6B'}"></div><div class="barlab">${x.k.replace(new RegExp('^'+arr[0].k.slice(0,4)),'')}</div><div class="barn">${x.n}笔</div></div>`}).join("");
+  return `<div class="chart">${bars}</div><div class="hint">柱高=价格水平; 橙色柱=比上期涨, 棕色柱=跌。单价区间 ${min}~${max} ${unit}。</div>`}
+let statMode="月", statItem="玉米", statSide="feed";
+function vStat(){
+  const feedItems=[...new Set(S.feedLog.filter(r=>r.dir==="入库"&&+r.price>0).map(r=>r.item))];
+  const hasFeed=feedItems.length>0, hasEgg=S.sales.some(r=>+r.price>0);
+  if(!hasFeed&&!hasEgg)return `<section class="panel"><h2>📈 行情统计</h2><div class="empty">还没有带单价的数据。<br>① 「饲料物料」入库时填了单价(元/斤)<br>② 「鸡蛋销售」每笔填了单价<br>记上之后, 这里自动出月/季/年行情图。</div></section>`;
+  if(!hasFeed)statSide="egg";
+  // 模式切换
+  const modes=["月","季","年"].map(m=>`<button class="mini ${statMode===m?'active':''}" onclick="setStatMode('${m}')">${m}</button>`).join("");
+  // 原料部分
+  let feedHtml="";
+  if(hasFeed){
+    if(!feedItems.includes(statItem))statItem=feedItems[feedItems.length-1];
+    const itemBtns=feedItems.map(i=>`<button class="mini ${statItem===i?'active':''}" onclick="setStatItem('${i}')">${i}</button>`).join("");
+    const recs=S.feedLog.filter(r=>r.item===statItem&&r.dir==="入库"&&+r.price>0);
+    const stats=priceStats(recs,r=>r.date,r=>r.price,statMode,r=>r.jin||+r.qty);
+    const latest=stats[stats.length-1];
+    feedHtml=`<section class="panel"><h2>🌾 ${statItem}进价 · 按${statMode}</h2>
+      <div style="margin-bottom:8px">${itemBtns}</div>
+      <div class="bigprice">${latest?latest.avg+" <small>元/斤</small>":"—"} ${latest?deltaLine(stats):""}</div>
+      ${priceChart(stats,"元/斤","#D97A1F")}</section>`;
+  }
+  // 鸡蛋部分
+  let eggHtml="";
+  if(hasEgg){
+    const byUnit={};S.sales.forEach(r=>{if(+r.price>0)byUnit[r.unit]=(byUnit[r.unit]||0)+1});
+    const unitRows=Object.keys(byUnit).map(u=>{
+      const stats=priceStats(S.sales.filter(r=>r.unit===u&&+r.price>0),r=>r.date,r=>r.price,statMode,r=>+r.qty);
+      const latest=stats[stats.length-1];
+      return `<section class="panel"><h2>🥚 鸡蛋售价(元/${u}) · 按${statMode}</h2>
+        <div class="bigprice">${latest?latest.avg+" <small>元/"+u+"</small>":"—"} ${latest?deltaLine(stats):""}</div>
+        ${priceChart(stats,"元/"+u,"#2E8B57")}</section>`}).join("");
+    eggHtml=unitRows;
+  }
+  // 明细表
+  const recsAll=[];
+  if(statSide==="feed"&&hasFeed){S.feedLog.filter(r=>r.item===statItem&&r.dir==="入库"&&+r.price>0).forEach(r=>recsAll.push({d:r.date,p:+r.price,q:r.jin||r.qty,u:"斤",src:"入库"}))}
+  S.sales.filter(r=>+r.price>0).forEach(r=>recsAll.push({d:r.date,p:+r.price,q:r.qty,u:r.unit,src:r.channel}));
+  recsAll.sort((a,b)=>a.d<b.d?1:-1);
+  const detRows=recsAll.slice(0,30).map(r=>`<tr><td>${r.d}</td><td>${r.src}</td><td class="money">${fmt(r.q)}${r.u}</td><td class="money">${r.p}元/${r.u}</td></tr>`).join("");
+  return `${feedHtml}${eggHtml}
+  <section class="panel"><h2>🔧 查看</h2><div style="margin-bottom:8px">${modes}</div><div class="hint">切换月/季/年, 上面两张图跟着变。</div></section>
+  <section class="panel"><h2>📋 最近单价明细(前30笔)</h2><table><tr><th>日期</th><th>来源</th><th>数量</th><th>单价</th></tr>${detRows}</table></section>`;
+}
+function setStatMode(m){statMode=m;render()}
+function setStatItem(i){statItem=i;render()}
+
 function vBak(){
   return `<section class="panel"><h2>📤 导出备份</h2>
   <button class="go" onclick="exportData()">下载备份文件 (.json)</button>
@@ -397,7 +509,7 @@ function vBak(){
   <button class="mini" style="color:#C96A6A;border-color:#E5B4B4" onclick="if(confirm('确定清空全部数据? 此操作不可恢复!')&&confirm('再次确认: 真的清空?')){localStorage.removeItem(KEY);sessionStorage.removeItem('gx_login');location.reload()}">清空全部数据</button></section>
   <section class="panel"><h2>🔒 密码与锁屏</h2>
     <button class="go" onclick="lockNow()">立即锁屏</button>
-    <div class="hint">锁屏后需输入密码再进。换密码: 先「清空数据」再重设(密码本身不存明文, 无法直接改)。</div></section>`;
+    <div class="hint">锁屏后需输入密码再进。忘密码: 锁屏后点「忘记密码」答密保问题即可重设, 数据不动。密保答案散列存本机, 无法查看原文。</div></section>`;
 }
 
 // ================= 增删 =================
