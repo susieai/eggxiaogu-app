@@ -101,7 +101,7 @@
 "use strict";
 // ================= 数据层 =================
 const KEY="eggxiaogu_data_v1";   // 与旧版同key, 已记数据自动兼容
-const EMPTY={flock:[],feedStock:{},feedLog:[],finance:[],sales:[],vaccines:[],plan:{},auth:{},recipe:null,consume:{}};
+const EMPTY={flock:[],feedStock:{},feedLog:[],finance:[],sales:[],vaccines:[],plan:{},auth:{},recipe:null,consume:{},sync:null};
 let S=load();
 function load(){try{const r=localStorage.getItem(KEY);return r?Object.assign(JSON.parse(JSON.stringify(EMPTY)),JSON.parse(r)):JSON.parse(JSON.stringify(EMPTY))}catch(e){return JSON.parse(JSON.stringify(EMPTY))}}
 function save(){localStorage.setItem(KEY,JSON.stringify(S))}
@@ -567,8 +567,89 @@ function vStat(){
 function setStatMode(m){statMode=m;render()}
 function setStatItem(i){statItem=i;render()}
 
+// ================= ☁️ GitHub 私库加密同步 =================
+// 原理: 账本JSON -> 用App密码经PBKDF2派生密钥 -> AES-GCM加密 -> base64 -> 存GitHub私库data.json
+// 云端只有密文; 同一台"密码"才能解开. token只存本机.
+const SYNC_REPO="susieai/eggxiaogu-sync";
+async function deriveKey(pw,salt){
+  const km=await crypto.subtle.importKey("raw",new TextEncoder().encode(pw),"PBKDF2",false,["deriveKey"]);
+  return crypto.subtle.deriveKey({name:"PBKDF2",salt,iterations:150000,hash:"SHA-256"},km,{name:"AES-GCM",length:256},false,["encrypt","decrypt"])}
+async function encData(obj,pw){
+  const salt=crypto.getRandomValues(new Uint8Array(16)),iv=crypto.getRandomValues(new Uint8Array(12));
+  const key=await deriveKey(pw,salt);
+  const ct=await crypto.subtle.encrypt({name:"AES-GCM",iv},key,new TextEncoder().encode(JSON.stringify(obj)));
+  const all=new Uint8Array(16+12+ct.byteLength);all.set(salt,0);all.set(iv,16);all.set(new Uint8Array(ct),28);
+  return btoa(String.fromCharCode(...all))}
+async function decData(b64,pw){
+  const raw=Uint8Array.from(atob(b64),c=>c.charCodeAt(0));
+  const salt=raw.slice(0,16),iv=raw.slice(16,28),ct=raw.slice(28);
+  const key=await deriveKey(pw,salt);
+  const pt=await crypto.subtle.decrypt({name:"AES-GCM",iv},key,ct);
+  return JSON.parse(new TextDecoder().decode(pt))}
+async function ghGet(){ // 拉云端密文(404=云端还没有)
+  const t=S.sync.token;const r=await fetch(`https://api.github.com/repos/${SYNC_REPO}/contents/data.json`,{cache:"no-store",headers:{Authorization:`token ${t}`}});
+  if(r.status===404)return null;if(!r.ok)throw new Error("读取失败 "+r.status);
+  const j=await r.json();return {b64:j.content.replace(/\s/g,""),sha:j.sha}}
+async function ghPut(b64,sha){ // 推密文
+  const t=S.sync.token;
+  const body={message:"账本同步 "+new Date().toISOString().slice(0,16).replace("T"," "),content:b64};
+  if(sha)body.sha=sha;
+  const r=await fetch(`https://api.github.com/repos/${SYNC_REPO}/contents/data.json`,{method:"PUT",headers:{Authorization:`token ${t}`,"Content-Type":"application/json"},body:JSON.stringify(body)});
+  if(!r.ok)throw new Error("上传失败 "+r.status);return (await r.json()).content.sha}
+let LAST_SYNC_MSG="",LAST_SYNC_ERR=false;
+function syncMsg(m,err){LAST_SYNC_MSG=m;LAST_SYNC_ERR=!!err;const el=document.getElementById("sync_msg");if(el)el.innerHTML=`<div class="hint" style="color:${err?'#B3261E':'#2E7D32'}">${m}</div>`;else if(!err)console.log(m)}
+async function syncSetup(e){ // 首次配置: 存token
+  e.preventDefault();const d=fd(e.target);const t=(d.token||"").trim();
+  if(!t.startsWith("ghp_")&&!t.startsWith("github_pat_")){syncMsg("token 格式不像 GitHub 的(应以 ghp_ 开头), 请回 GitHub 粘贴完整的令牌",true);return}
+  S.sync=S.sync||{};S.sync.token=t;save();syncMsg("✅ 已保存令牌(只存本机)。下面可以上传/下载了。");render()}
+async function syncUp(){ // 上传: 用App密码加密本机账本 -> 推云端
+  try{
+    if(!S.sync||!S.sync.token){syncMsg("请先填入同步令牌",true);return}
+    const pw=document.getElementById("sync_pw").value;
+    if(!pw){syncMsg("请输入加密密码(建议就用App登录密码)",true);return}
+    syncMsg("⏳ 正在加密并上传…");
+    const b64=await encData(S,pw);
+    const cur=await ghGet();
+    if(cur){ // 云端有旧数据: 验密码能解开才覆盖, 防止密码不一致互相覆盖
+      try{await decData(cur.b64,pw)}catch(e){syncMsg("❌ 密码与云端那份不一致——为防覆盖错账, 已停止。请输入当初上传时用的密码。",true);return}}
+    const sha=await ghPut(b64,cur?cur.sha:null);
+    S.sync.lastUp=new Date().toISOString();S.sync.sha=sha;save();
+    syncMsg(`✅ 上传成功(${new Date().toLocaleString("zh-CN",{hour12:false})})。另一台设备上点「下载同步」即可拉取。`)}
+  catch(e){syncMsg("❌ "+e.message,true)}}
+async function syncDown(){ // 下载: 拉密文 -> 用App密码解 -> 确认后覆盖本机
+  try{
+    if(!S.sync||!S.sync.token){syncMsg("请先填入同步令牌",true);return}
+    const pw=document.getElementById("sync_pw").value;
+    if(!pw){syncMsg("请输入解密密码(上传时用的那个)",true);return}
+    syncMsg("⏳ 正在下载并解密…");
+    const cur=await ghGet();
+    if(!cur){syncMsg("云端还没有账本。请先在有数据的设备上「上传到云端」。",true);return}
+    let remote;
+    try{remote=await decData(cur.b64,pw)}catch(e){syncMsg("❌ 解不开——密码不对, 或这份密文是别的密码锁的。",true);return}
+    const nR=(remote.feedLog||[]).length+(remote.sales||[]).length+(remote.finance||[]).length;
+    const nL=S.feedLog.length+S.sales.length+S.finance.length;
+    if(!confirm(`云端账本: 流水约 ${nR} 笔(存栏${(remote.flock||[]).reduce((a,r)=>a+r.qty,0)}只)\n本机账本: 流水约 ${nL} 笔\n\n用云端覆盖本机? 本机现有数据会先自动导出一份备份。`))return;
+    exportData(true); // 静默导出保底
+    const keep={sync:S.sync,auth:S.auth};
+    S=Object.assign(JSON.parse(JSON.stringify(EMPTY)),remote);
+    S.sync=keep.sync;S.auth=keep.auth||S.auth;
+    if(!S.consume)S.consume={};if(!S.recipe)S.recipe=null;
+    S.sync.sha=cur.sha;S.sync.lastDown=new Date().toISOString();save();
+    syncMsg(`✅ 下载并恢复成功(${new Date().toLocaleString("zh-CN",{hour12:false})})。`);render()}
+  catch(e){syncMsg("❌ "+e.message,true)}}
+
 function vBak(){
-  return `<section class="panel"><h2>📤 导出备份</h2>
+  const sc=S.sync||{};
+  const syncHtml=`
+  <section class="panel"><h2>☁️ 多设备同步(GitHub 加密私库)</h2>
+  ${sc.token?`<div style="margin-bottom:6px"><span class="tag s">● 已配置</span> ${sc.lastUp?`上次上传 ${new Date(sc.lastUp).toLocaleString("zh-CN",{hour12:false})}`:"尚未上传"} ${sc.lastDown?` · 上次下载 ${new Date(sc.lastDown).toLocaleString("zh-CN",{hour12:false})}`:""}</div>`:`<div class="hint" style="margin-bottom:6px">首次使用: 在 GitHub 网页登录后打开 <b>github.com/settings/tokens/new</b> → 勾选 <b>repo</b> 权限 → 生成令牌并复制(ghp_开头, 只显示一次)。这是您设备的"同步钥匙"。</div>`}
+  ${sc.token?"":`<form onsubmit="syncSetup(event)"><div class="field"><label>同步令牌(ghp_开头)</label><input type="password" name="token" placeholder="粘贴 GitHub 令牌" required></div><button class="go">保存令牌</button></form>`}
+  ${sc.token?`
+  <div class="field"><label>加密密码(两台设备必须一致)</label><input type="password" id="sync_pw" placeholder="上传/解开账本用的密码"></div>
+  <div style="display:flex;gap:8px"><button class="go" onclick="syncUp()">⬆️ 上传到云端</button><button class="mini" onclick="syncDown()">⬇️ 下载同步</button></div>`:""}
+  <div id="sync_msg">${LAST_SYNC_MSG?`<div class="hint" style="color:${LAST_SYNC_ERR?'#B3261E':'#2E7D32'}">${LAST_SYNC_MSG}</div>`:""}</div>
+  <div class="hint">账本先用密码加密再上传, 云端私库只有乱码。用法: 老设备「上传」→ 新设备「下载」; 平时哪台记完传一次。令牌只存本机, 清缓存后需重填一次。手机号都不用注册——GitHub 账号咱已经有了。</div></section>`;
+  return syncHtml+`<section class="panel"><h2>📤 导出备份</h2>
   <button class="go" onclick="exportData()">下载备份文件 (.json)</button>
   <div class="hint">数据存在浏览器里, 换电脑/清缓存会丢。建议每月导出一次, 存到微信文件传输助手或U盘。</div></section>
   <section class="panel"><h2>📥 导入恢复</h2>
@@ -589,7 +670,7 @@ function addFin(e){e.preventDefault();const d=fd(e.target);S.finance.push({id:ui
 function addSale(e){e.preventDefault();const d=fd(e.target);S.sales.push({id:uid(),...d,qty:+d.qty,price:+d.price});save();render()}
 function addVax(e){e.preventDefault();const d=fd(e.target);S.vaccines.push({id:uid(),...d});save();render()}
 function delRow(arr,id){if(!confirm("删除这条记录?"))return;S[arr]=S[arr].filter(r=>r.id!==id);save();render()}
-function exportData(){const blob=new Blob([JSON.stringify(S,null,2)],{type:"application/json"});const a=document.createElement("a");a.href=URL.createObjectURL(blob);a.download=`蛋小固管家备份_${today()}.json`;a.click()}
+function exportData(silent){const blob=new Blob([JSON.stringify(S,null,2)],{type:"application/json"});const a=document.createElement("a");a.href=URL.createObjectURL(blob);a.download=`蛋小固管家备份_${today()}.json`;if(silent)return;a.click()}
 function importData(e){const f=e.target.files[0];if(!f)return;const rd=new FileReader();rd.onload=()=>{try{const d=JSON.parse(rd.result);if(!confirm("导入将覆盖当前数据, 继续?"))return;S=Object.assign(JSON.parse(JSON.stringify(EMPTY)),d);save();location.reload()}catch(err){alert("文件不是有效备份: "+err.message)}};rd.readAsText(f)}
 function afterRender(){}
 
