@@ -248,6 +248,11 @@ function lowFeed(){const R=recipeGet();if(R.total>0&&R.rows.length){const ia=inv
 // ================= 混合料配方 + 每日自动消耗 =================
 // recipe = {total:每日总耗(斤), rows:[{item,pct}], per:每只日耗(两/只, 仅展示), enabled:true}
 function recipeGet(){if(!S.recipe)S.recipe={total:0,rows:[],enabled:true};if(!S.recipe.rows)S.recipe.rows=[];return S.recipe}
+// 配方编辑行(编辑期间暂存, 与 S.recipe 分离, 保存才生效)
+let RECIPE_DRAFT=null;
+function draftRows(){if(!RECIPE_DRAFT)RECIPE_DRAFT=(S.recipe&&S.recipe.rows.length?[...S.recipe.rows.map(r=>({...r}))]:[{item:"",pct:""},{item:"",pct:""},{item:"",pct:""}]).slice(0,12);return RECIPE_DRAFT}
+function recipeAddRow(){const d=draftRows();if(d.length>=12){alert("最多12个品种, 够配预混料了 :)");return}d.push({item:"",pct:""});render()}
+function recipeDelRow(i){const d=draftRows();d.splice(i,1);render()}
 function saveRecipe(e){e.preventDefault();const d=fd(e.target);const t=+d.total;
   if(!(t>0)){alert("每日总耗料要大于0");return}
   const rows=[];for(let i=0;i<12;i++){const it=d["ri"+i],pc=+d["rp"+i];if(it&&pc>0)rows.push({item:it,pct:pc})}
@@ -255,7 +260,7 @@ function saveRecipe(e){e.preventDefault();const d=fd(e.target);const t=+d.total;
   if(!rows.length){alert("至少填一行品种");return}
   if(Math.abs(sum-100)>0.5&&!confirm(`品种占比合计 ${sum}%, 不是100%, 仍要保存吗?(系统会按比例折算)`))return;
   rows.forEach(r=>r.pct=r.pct/sum*100);
-  S.recipe={total:t,rows,per:+d.per||r2(t/stockCount()*10),enabled:true};save();render()}
+  S.recipe={total:t,rows,per:+d.per||r2(t/stockCount()*10),enabled:true};RECIPE_DRAFT=null;save();render()}
 function recipeToggle(){S.recipe.enabled=!S.recipe.enabled;save();render()}
 function runConsume(){ // 手动"记今日消耗"(补记/重记今日; 自动消耗在启动时做)
   const R=recipeGet();if(!R.enabled||!(R.total>0)||!R.rows.length){alert("请先设置配方并启用");return}
@@ -345,7 +350,7 @@ function vFeed(){
   const dc=x=>x.days===null?"":x.days<0?`<span class="tag r">已透支</span>`:x.days<=3?`<span class="tag r">仅够${x.days<1?"不足1":x.days}天</span>`:x.days<=7?`<span class="tag w">约${x.days}天</span>`:`<span style="color:#2E7D32;font-size:12px">够${x.days}天</span>`;
   const invRows=inv.map(x=>{
     return `<tr><td>${x.item}</td><td class="money ${x.st<0?'neg':''}">${fmt(x.st)}斤</td><td class="money">${x.daily?fmt(r2(x.daily))+"斤/天":"—"}</td><td>${dc(x)}</td></tr>`}).join("");
-  const rRows=R.rows.map((r,i)=>`<tr><td><input name="ri${i}" list="feed_items_dl" value="${r.item}" style="width:90px"></td><td><input name="rp${i}" type="number" step="0.1" value="${Math.round(r.pct*10)/10}" style="width:70px">%</td></tr>`).join("");
+  const rRows=draftRows().map((r,i)=>`<tr><td><input name="ri${i}" list="feed_items_dl" value="${r.item}" placeholder="品种名" style="width:90px"></td><td style="white-space:nowrap"><input name="rp${i}" type="number" step="0.1" value="${Math.round(r.pct*10)/10}" placeholder="占比" style="width:64px">% <button type="button" class="del" onclick="recipeDelRow(${i})" title="删这行">✕</button></td></tr>`).join("");
   const recipeHtml=`
   <section class="panel"><h2>🧮 混合料配方(每日自动出库)</h2>
   ${R.total>0?`<div style="margin-bottom:8px"><span class="tag ${R.enabled?'s':'w'}">${R.enabled?"● 启用中":"⏸ 已停用"}</span> 每日 <b>${fmt(R.total)}</b> 斤${R.per?` · 折合 <b>${R.per}</b> 两/只·天(存栏${fmt(stock)}只)`:""} <button class="mini" onclick="recipeToggle()">${R.enabled?"停用":"启用"}</button></div>`:""}
@@ -353,12 +358,13 @@ function vFeed(){
     <div class="field"><label>每日总耗料(斤)</label><input type="number" step="0.01" name="total" value="${R.total||""}" placeholder="如 2200" required></div>
     <div class="field"><label>每只日耗(两/只, 可不填)</label><input type="number" step="0.01" name="per" value="${R.per||""}" placeholder="如 2.2, 填了只作参考显示"></div>
     <table style="margin:4px 0"><tr><th>品种</th><th>占比</th></tr>
-      ${rRows||`<tr><td><input name="ri0" list="feed_items_dl" placeholder="玉米" style="width:90px"></td><td><input name="rp0" type="number" step="0.1" placeholder="62" style="width:70px">%</td></tr><tr><td><input name="ri1" list="feed_items_dl" placeholder="豆粕" style="width:90px"></td><td><input name="rp1" type="number" step="0.1" placeholder="24" style="width:70px">%</td></tr><tr><td><input name="ri2" list="feed_items_dl" placeholder="麸皮" style="width:90px"></td><td><input name="rp2" type="number" step="0.1" placeholder="14" style="width:70px">%</td></tr>`}
+      ${rRows}
     </table>
+    <button type="button" class="mini" onclick="recipeAddRow()">➕ 加一个品种</button>
     <datalist id="feed_items_dl">${FEED_ITEMS.map(i=>`<option value="${i}">`).join("")}</datalist>
     <button class="go">保存配方</button>
   </form>
-  <div class="hint">设好后, 每天消耗自动出库(打开App时补记, 最多补7天)。上栏量变了改「每日总耗料」就行, 不用天天登记。消耗明细在下方流水里带「自动消耗」标。</div></section>
+  <div class="hint">品种不够就点「➕ 加一个品种」(最多12个)。清单里有玉米/豆粕/预混料/麦麸/石粉/磷酸氢钙/食盐/多维等, 清单外的名字直接打字也行。设好后每天消耗自动出库(打开App时补记, 最多补7天)。上栏量变了改「每日总耗料」就行, 不用天天登记。</div></section>
   <section class="panel"><h2>📊 库存盘查(入库 − 消耗 = 现有)</h2>
     ${ia.length?ia.map(a=>`<div style="margin:4px 0"><span class="tag ${a.lvl}">${a.lvl==="r"?"🔴 急补":"🟡 该进料"}</span> ${a.txt}</div>`).join(""):""}
     <table><tr><th>品种</th><th>现有库存</th><th>日耗</th><th>可撑</th></tr>${invRows||`<tr><td class="empty">暂无</td></tr>`}</table>
