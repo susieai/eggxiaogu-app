@@ -293,7 +293,7 @@ function invAlerts(){return feedInv().filter(x=>x.daily>0).map(x=>{if(x.days===n
   if(x.days<=7)return {lvl:"w",txt:`${x.item} 约 ${x.days} 天(${fmt(x.st)}斤)`};return null}).filter(Boolean)}
 function vaxAlerts(){const out=[];const t=today();
   // 来自免疫计划的待办: 未勾选且日期已进入7天窗口或已过期
-  if(S.plan&&S.plan.start){for(const it of VAX_PLAN){if(S.plan.done&&S.plan.done.includes(it.d))continue;const due=addDays(S.plan.start,it.d);if(due<=addDays(t,7))out.push({name:it.name,due,lvl:due<t?"w":"s",txt:`${due<t?"已过期":"计划"} ${due} · ${it.name}(${it.d}日龄)`})}}
+  if(S.plan&&S.plan.start){for(const it of planAll()){if(S.plan.done&&S.plan.done.includes(it.cid||it.d))continue;const due=addDays(S.plan.start,it.d);if(due<=addDays(t,7))out.push({name:it.name,due,lvl:due<t?"w":"s",txt:`${due<t?"已过期":"计划"} ${due} · ${it.name}(${it.d}日龄)`})}}
   // 来自免疫档案的下次免疫
   for(const v of S.vaccines){if(!v.next)continue;if(v.next<t)out.push({...v,due:v.next,lvl:"w",txt:`已到期 ${v.next} · ${v.name}`});else{const dd=Math.round((new Date(v.next)-new Date(t))/864e5);if(dd<=7)out.push({...v,due:v.next,lvl:"s",txt:`${dd===0?"今天":dd+"天后"} ${v.next} · ${v.name}`})}}
   return out.sort((a,b)=>a.due<b.due?-1:1)}
@@ -473,28 +473,59 @@ function vPlan(){
     </form>
     <div class="hint">按商品蛋鸡常规免疫程序生成 15 项: 马立克→新城疫→法氏囊→鸡痘→禽流感→开产前联苗+驱虫, 共 119 日龄。生成后总览页自动提醒临期项目; 具体日程以当地兽医和疫苗说明书为准, 可自行调整。</div></section>`;
   const age=planAge();
+  if(!document.getElementById("pvaxlist")){const dl=document.createElement("div");dl.innerHTML='<datalist id="pvaxlist"><option value="新城疫油苗"><option value="支原体灭活苗"><option value="传鼻灭活苗"><option value="禽流感H9灭活苗"><option value="驱虫(伊维菌素)"></datalist><datalist id="pwaylist"><option value="皮下注射"><option value="肌肉注射"><option value="饮水"><option value="点眼"><option value="拌料"><option value="喷雾"></datalist>';document.body.appendChild(dl)}
   const doneSet=new Set(S.plan.done||[]);
-  const rows=VAX_PLAN.map(it=>{const due=addDays(S.plan.start,it.d);const done=doneSet.has(it.d);
+  const rows=planAll().map(it=>{const due=addDays(S.plan.start,it.d);const done=doneSet.has(it.d);
     const dueTs=new Date(due+"T00:00:00").getTime(),nowTs=new Date(today()+"T00:00:00").getTime();
     const late=!done&&dueTs<nowTs, soon=!done&&!late&&dueTs-nowTs<=7*864e5;
     const st=done?`<span class="tag ok">已完成</span>`:late?`<span class="tag w">已过期${Math.round((nowTs-dueTs)/864e5)}天</span>`:soon?`<span class="tag s">${Math.ceil((dueTs-nowTs)/864e5)}天后</span>`:`<span class="tag" style="background:#F1EADC;color:#8A7357">待做</span>`;
-    return `<tr style="${done?'opacity:.55':''}"><td>${it.d}日龄</td><td>${due}</td><td><b>${it.name}</b><div style="font-size:12px;color:var(--sub)">${it.note}</div></td><td>${it.way}</td><td>${it.dose}</td><td>${st}</td><td>${done?`<button class="mini" onclick="undoPlan(${it.d})">撤销</button>`:`<button class="go" style="padding:5px 12px;font-size:13px" onclick="doPlan(${it.d})">已做</button>`}</td></tr>`}).join("");
-  const pct=Math.round(doneSet.size/VAX_PLAN.length*100);
+    const key=it.cid||it.d;
+    const delBtn=it.cid?` <button class="mini" style="color:#B3261E;border-color:#B3261E;padding:2px 7px;font-size:11px" onclick="delCustomVax('${it.cid}')">删</button>`:"";
+    return `<tr style="${done?'opacity:.55':''}"><td>${it.d}日龄</td><td>${due}</td><td><b>${it.name}</b>${delBtn}<div style="font-size:12px;color:var(--sub)">${it.note}</div></td><td>${it.way}</td><td>${it.dose}</td><td>${st}</td><td>${done?`<button class="mini" onclick="undoPlan('${key}')">撤销</button>`:`<button class="go" style="padding:5px 12px;font-size:13px" onclick="doPlan('${key}')">已做</button>`}</td></tr>`}).join("");
+  const pct=Math.round(doneSet.size/planAll().length*100);
   return `<section class="panel"><h2>🗓 免疫计划进度</h2>
     <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:8px">
       <div>${S.plan.house||"本批鸡"} · ${S.plan.start} 进雏 · 今天 ${age<0?"未进雏":age+" 日龄"}</div>
       <div style="flex:1;min-width:160px;height:10px;background:#F1EADC;border-radius:99px;overflow:hidden"><div style="width:${pct}%;height:100%;background:linear-gradient(90deg,var(--brand2),var(--brand))"></div></div>
-      <div style="font-weight:700;color:var(--brand)">${doneSet.size}/${VAX_PLAN.length} 项 (${pct}%)</div>
+      <div style="font-weight:700;color:var(--brand)">${doneSet.size}/${planAll().length} 项 (${pct}%)</div>
       <button class="mini" onclick="if(confirm('重置计划? 已勾进度会清空')){S.plan={};save();render()}">重置计划</button>
     </div>
     <div class="hint">点「已做」自动把这次免疫写进档案(日期=计划日, 鸡舍=计划鸡舍), 并在计划里打勾。提前或延后做的, 去「疫苗防疫」页手动登记, 再回来点已做即可。</div></section>
   <section class="panel"><h2>📋 全流程日程表 (0-119日龄)</h2>
-  <table><tr><th>日龄</th><th>计划日期</th><th>疫苗/事项</th><th>方式</th><th>剂量</th><th>状态</th><th></th></tr>${rows}</table></section>`;
+  <table><tr><th>日龄</th><th>计划日期</th><th>疫苗/事项</th><th>方式</th><th>剂量</th><th>状态</th><th></th></tr>${rows}</table></section>
+  <section class="panel"><h2>➕ 计划里加一项(自定义疫苗/事项)</h2>
+  <form onsubmit="addCustomVax(event)">
+    <div style="display:flex;gap:8px;flex-wrap:wrap">
+      <div class="field" style="flex:1;min-width:90px"><label>日龄</label><input type="number" name="cd" min="0" max="600" placeholder="130" required></div>
+      <div class="field" style="flex:2;min-width:150px"><label>疫苗/事项</label><input name="cname" list="pvaxlist" placeholder="如: 支原体灭活苗" required></div>
+      <div class="field" style="flex:1;min-width:90px"><label>方式</label><input name="cway" list="pwaylist" placeholder="皮下注射"></div>
+      <div class="field" style="flex:1;min-width:80px"><label>剂量</label><input name="cdose" placeholder="0.5ml"></div>
+    </div>
+    <div class="field"><label>备注(可选)</label><input name="cnote" placeholder="兽医建议 / 用途"></div>
+    <button class="go">加进计划表</button>
+  </form>
+  <div class="hint">加的项和内置 15 项一样: 到期进总览提醒, 点「已做」写进免疫档案。填错了点行内「删」即可。</div></section>`;
 }
+function planAll(){const cs=(S.plan&&S.plan.custom)||[];return VAX_PLAN.concat(cs.map(c=>({d:c.d,name:c.name,way:c.way,dose:c.dose,note:c.note,cid:c.cid})))}
+function addCustomVax(e){ // 计划表加一项自定义疫苗/事项
+  e.preventDefault();const d=fd(e.target);
+  if(!S.plan||!S.plan.start){alert("先开启免疫计划, 再添加自定义项目");return}
+  const day=Math.round(+d.cd);
+  if(!(day>=0&&day<=600)){alert("日龄请填 0-600 之间的数字");return}
+  if(!d.cname.trim()){alert("请填疫苗/事项名称");return}
+  S.plan.custom=S.plan.custom||[];
+  S.plan.custom.push({cid:uid(),d:day,name:d.cname.trim(),way:d.cway.trim()||"—",dose:d.cdose.trim()||"—",note:(d.cnote||"").trim()||"自定义项"});
+  touchSave();render()}
+function delCustomVax(cid){if(!confirm("从计划中删除这一项?"))return;
+  S.plan.custom=(S.plan.custom||[]).filter(c=>c.cid!==cid);
+  S.plan.done=(S.plan.done||[]).filter(x=>x!==cid);
+  touchSave();render()}
+
 function startPlan(e){e.preventDefault();const d=fd(e.target);S.plan={start:d.start,house:d.house,done:[]};touchSave();render()}
-function doPlan(day){const it=VAX_PLAN.find(x=>x.d===day);if(!it)return;const due=addDays(S.plan.start,day);
-  S.vaccines.push({id:uid(),date:due,name:it.name,house:S.plan.house||"1号舍",dose:it.dose==="—"?"":it.dose,way:it.way,next:"",note:"计划内免疫"});
-  S.plan.done=S.plan.done||[];if(!S.plan.done.includes(day))S.plan.done.push(day);touchSave();render()}
+function doPlan(key){const it=planAll().find(x=>(x.cid||x.d)===(isNaN(+key)?key:+key));if(!it)return;const due=addDays(S.plan.start,it.d);
+  S.vaccines.push({id:uid(),date:due,name:it.name,house:S.plan.house||"1号舍",dose:it.dose==="—"?"":it.dose,way:it.way,next:"",note:it.cid?"自定义免疫":"计划内免疫"});
+  S.plan.done=S.plan.done||[];if(!S.plan.done.includes(key))S.plan.done.push(key);touchSave();render()}
+function undoPlan(key){S.plan.done=(S.plan.done||[]).filter(x=>x!==key);touchSave();render()}
 function undoPlan(day){S.plan.done=(S.plan.done||[]).filter(x=>x!==day);touchSave();render()}
 
 // ================= 行情统计 =================
