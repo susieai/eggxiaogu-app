@@ -231,7 +231,8 @@ function loginScreen(msg){document.getElementById("main").innerHTML=`<div style=
     <div class="hint" style="text-align:left;margin-top:14px">密码只存本机, 密保答案也只存本机(散列)。${hasAuth()?"忘了密码点「忘记密码」答密保题即可重设, 账本不动。":"密保问题用于日后忘密码找回, 务必填一个忘不了的答案。"}</div>
   </section></div>`;
   document.getElementById("nav").style.display="none"}
-function bootApp(){backfillConsume();document.getElementById("nav").style.display="";render()}
+function bootApp(){backfillConsume();document.getElementById("nav").style.display="";render();
+  if(syncOn())setTimeout(()=>{autoPull().catch(e=>console.log("自动同步(收)暂缓:",e.message))},800)}
 
 // ================= 框架 =================
 const TABS=["dash","flock","feed","finance","sales","vax","plan","stat","bak"];
@@ -260,8 +261,8 @@ function saveRecipe(e){e.preventDefault();const d=fd(e.target);const t=+d.total;
   if(!rows.length){alert("至少填一行品种");return}
   if(Math.abs(sum-100)>0.5&&!confirm(`品种占比合计 ${sum}%, 不是100%, 仍要保存吗?(系统会按比例折算)`))return;
   rows.forEach(r=>r.pct=r.pct/sum*100);
-  S.recipe={total:t,rows,per:+d.per||r2(t/stockCount()*10),enabled:true};RECIPE_DRAFT=null;save();render()}
-function recipeToggle(){S.recipe.enabled=!S.recipe.enabled;save();render()}
+  S.recipe={total:t,rows,per:+d.per||r2(t/stockCount()*10),enabled:true};RECIPE_DRAFT=null;touchSave();render()}
+function recipeToggle(){S.recipe.enabled=!S.recipe.enabled;touchSave();render()}
 function runConsume(){ // 手动"记今日消耗"(补记/重记今日; 自动消耗在启动时做)
   const R=recipeGet();if(!R.enabled||!(R.total>0)||!R.rows.length){alert("请先设置配方并启用");return}
   consumeDay(today(),true);render()}
@@ -274,7 +275,7 @@ function consumeDay(day,force){ // 把 day 的消耗折成一组出库流水(当
   R.rows.forEach(row=>{const jin=r2(R.total*row.pct/100);if(jin<=0)return;
     S.feedStock[row.item]=r2((S.feedStock[row.item]||0)-jin);
     S.feedLog.push({id:uid(),date:day,item:row.item,dir:"出库(饲喂)",qty:jin,unit:"斤",jin,auto:true,note:tag})});
-  S.consume[day]=true;save();return true}
+  S.consume[day]=true;touchSave();return true}
 function backfillConsume(){ // 启动时补齐上次用到今天的每日消耗(每次打开最多补7天, 再久提示手动核)
   const R=recipeGet();if(!S.recipe||!R.enabled||!(R.total>0)||!R.rows.length)return;
   const days=[];const d=new Date();
@@ -490,11 +491,11 @@ function vPlan(){
   <section class="panel"><h2>📋 全流程日程表 (0-119日龄)</h2>
   <table><tr><th>日龄</th><th>计划日期</th><th>疫苗/事项</th><th>方式</th><th>剂量</th><th>状态</th><th></th></tr>${rows}</table></section>`;
 }
-function startPlan(e){e.preventDefault();const d=fd(e.target);S.plan={start:d.start,house:d.house,done:[]};save();render()}
+function startPlan(e){e.preventDefault();const d=fd(e.target);S.plan={start:d.start,house:d.house,done:[]};touchSave();render()}
 function doPlan(day){const it=VAX_PLAN.find(x=>x.d===day);if(!it)return;const due=addDays(S.plan.start,day);
   S.vaccines.push({id:uid(),date:due,name:it.name,house:S.plan.house||"1号舍",dose:it.dose==="—"?"":it.dose,way:it.way,next:"",note:"计划内免疫"});
-  S.plan.done=S.plan.done||[];if(!S.plan.done.includes(day))S.plan.done.push(day);save();render()}
-function undoPlan(day){S.plan.done=(S.plan.done||[]).filter(x=>x!==day);save();render()}
+  S.plan.done=S.plan.done||[];if(!S.plan.done.includes(day))S.plan.done.push(day);touchSave();render()}
+function undoPlan(day){S.plan.done=(S.plan.done||[]).filter(x=>x!==day);touchSave();render()}
 
 // ================= 行情统计 =================
 // 原料价: feedLog 里入库且填了单价 (元/斤); 鸡蛋价: sales (元/斤, 枚/件折算或单独看)
@@ -567,6 +568,11 @@ function vStat(){
 function setStatMode(m){statMode=m;render()}
 function setStatItem(i){statItem=i;render()}
 
+function recalcStockFromLog(){ // 从全部流水重算库存(合并同步后调用, 消除两机库存漂移)
+  const st={};
+  S.feedLog.forEach(r=>{const j=r2(+r.jin||0);if(!j)return;
+    st[r.item]=r2((st[r.item]||0)+((r.dir||"").startsWith("出")?-j:j))});
+  S.feedStock=st}
 // ================= ☁️ GitHub 私库加密同步 =================
 // 原理: 账本JSON -> 用App密码经PBKDF2派生密钥 -> AES-GCM加密 -> base64 -> 存GitHub私库data.json
 // 云端只有密文; 同一台"密码"才能解开. token只存本机.
@@ -598,25 +604,74 @@ async function ghPut(b64,sha){ // 推密文
   if(!r.ok)throw new Error("上传失败 "+r.status);return (await r.json()).content.sha}
 let LAST_SYNC_MSG="",LAST_SYNC_ERR=false;
 function syncMsg(m,err){LAST_SYNC_MSG=m;LAST_SYNC_ERR=!!err;const el=document.getElementById("sync_msg");if(el)el.innerHTML=`<div class="hint" style="color:${err?'#B3261E':'#2E7D32'}">${m}</div>`;else if(!err)console.log(m)}
-async function syncSetup(e){ // 首次配置: 存token
-  e.preventDefault();const d=fd(e.target);const t=(d.token||"").trim();
-  if(!t.startsWith("ghp_")&&!t.startsWith("github_pat_")){syncMsg("token 格式不像 GitHub 的(应以 ghp_ 开头), 请回 GitHub 粘贴完整的令牌",true);return}
-  S.sync=S.sync||{};S.sync.token=t;save();syncMsg("✅ 已保存令牌(只存本机)。下面可以上传/下载了。");render()}
-async function syncUp(){ // 上传: 用App密码加密本机账本 -> 推云端
+function syncOn(){return !!(S.sync&&S.sync.token&&S.sync.auto)}
+function touchSave(){save();if(syncOn())autoPush()} // 记账即存, 存完排队自动上传
+let pushTimer=null;
+function autoPush(){ // 防抖: 停止记账1.5秒后才真上传, 连续记十几笔只传一次
+  if(pushTimer)clearTimeout(pushTimer);
+  pushTimer=setTimeout(()=>{doPush(true).catch(e=>{LAST_SYNC_MSG="自动上传失败: "+e.message+" (数据已存在本机, 稍后手动传一次即可)";LAST_SYNC_ERR=true;const el=document.getElementById("sync_msg");if(el)el.innerHTML=`<div class="hint" style="color:#B3261E">${LAST_SYNC_MSG}</div>`})},1500)}
+async function mergePull(pw){ // 拉云端, 与本机双向合并(按记录id去重, 互不覆盖, 新账号另算)
+  const cur=await ghGet();if(!cur)return {merged:0};
+  let remote;try{remote=await decData(cur.b64,pw)}catch(e){throw new Error("解不开——密码不对")}
+  let added=0;
+  // 数组类: 双向按 id 并集; 标量类(flock 计划/疫苗计划): remote 有本机没有的 key 才收
+  const arrays=["flock","feedLog","finance","sales","vaccines"];
+  arrays.forEach(k=>{
+    const R=remote[k]||[],L=S[k]||[];
+    const ids=new Set(L.map(r=>r.id).filter(Boolean));
+    const inc=R.filter(r=>!r.id||!ids.has(r.id));
+    if(inc.length){added+=inc.length;S[k]=L.concat(inc)}})
+  Object.keys(remote.plan||{}).forEach(k=>{if(!(k in (S.plan||{})))S.plan[k]=remote.plan[k]});
+  (remote.vaccines||[]).forEach(()=>{});
+  return {merged:added}}
+function syncAutoToggle(on){ // 开关自动同步; 开时把当前密码框的密码记进本机(自动同步要用)
+  S.sync=S.sync||{};
+  if(on){const el=document.getElementById("sync_pw");const pw=el&&el.value.trim();
+    if(!pw){alert("请先在上方输入加密密码, 再打开自动同步");S.sync.auto=false;render();return}
+    S.sync.pw=pw;S.sync.auto=true;save();autoPush();
+    syncMsg("✅ 自动同步已开: 记账后自动上传, 打开App自动并入手账。密码已记在本机(仅本机)。")}
+  else{S.sync.auto=false;save();syncMsg("自动同步已关。")}}
+async function syncMergeNow(){ // 手动触发一次"拉取合并"(不覆盖, 两边并集)
   try{
     if(!S.sync||!S.sync.token){syncMsg("请先填入同步令牌",true);return}
-    const pw=document.getElementById("sync_pw").value;
-    if(!pw){syncMsg("请输入加密密码(建议就用App登录密码)",true);return}
-    syncMsg("⏳ 正在加密并上传…");
-    const b64=await encData(S,pw);
-    const cur=await ghGet();
-    if(cur){ // 云端有旧数据: 验密码能解开才覆盖, 防止密码不一致互相覆盖
-      try{await decData(cur.b64,pw)}catch(e){syncMsg("❌ 密码与云端那份不一致——为防覆盖错账, 已停止。请输入当初上传时用的密码。",true);return}}
-    const sha=await ghPut(b64,cur?cur.sha:null);
-    S.sync.lastUp=new Date().toISOString();S.sync.sha=sha;save();
-    syncMsg(`✅ 上传成功(${new Date().toLocaleString("zh-CN",{hour12:false})})。另一台设备上点「下载同步」即可拉取。`)}
+    const el=document.getElementById("sync_pw");const pw=el&&el.value.trim()||S.sync.pw||"";
+    if(!pw){syncMsg("请输入加密密码",true);return}
+    S.sync.pw=pw;
+    syncMsg("⏳ 正在拉取并合并…");
+    const r=await mergePull(pw);
+    if(!r||r.merged===0){syncMsg("云端没有新东西, 两边已是一致。");return}
+    recalcStockFromLog();save();await doPush(false);
+    syncMsg(`✅ 已并入 ${r.merged} 笔, 并回传云端。`);render()}
   catch(e){syncMsg("❌ "+e.message,true)}}
-async function syncDown(){ // 下载: 拉密文 -> 用App密码解 -> 确认后覆盖本机
+async function syncSetup(e){ // 首次配置: 存token
+  e.preventDefault();const d=fd(e.target);const t=(d.token||"").trim();
+  if(!/^(ghp_|gho_|ghu_|ghs_|github_pat_)/.test(t)){syncMsg("token 格式不像 GitHub 的(应以 ghp_ 或 gho_ 开头), 请回 GitHub 粘贴完整的令牌",true);return}
+  S.sync=S.sync||{};S.sync.token=t;save();syncMsg("✅ 已保存令牌(只存本机)。下面可以上传/下载了。");render()}
+async function doPush(isAuto){ // 上传(自动/手动共用): 先拉云端合并, 再整包加密推回
+  if(!S.sync||!S.sync.token)throw new Error("请先填入同步令牌");
+  const pwEl=document.getElementById("sync_pw");
+  const pw=isAuto?(S.sync.pw||""):(pwEl&&pwEl.value||S.sync.pw||"");
+  if(!pw)throw new Error("请输入加密密码");
+  const b64=await encData(S,pw);
+  const cur=await ghGet();
+  if(cur){try{await decData(cur.b64,pw)}catch(e){
+    if(isAuto){S.sync.auto=false;save();throw new Error("云端密码与本机不一致, 已暂停自动同步")}
+    throw new Error("密码与云端那份不一致——为防覆盖错账, 已停止")}}
+  const sha=await ghPut(b64,cur?cur.sha:null);
+  S.sync.lastUp=new Date().toISOString();S.sync.sha=sha;save();
+  if(!isAuto)syncMsg(`✅ 上传成功(${new Date().toLocaleString("zh-CN",{hour12:false})})。另一台设备上点「下载同步」即可拉取。`);
+  return true}
+async function autoPull(){ // 打开App时自动收: 拉云端→按id合并→若并了新记录则重算库存→再回推
+  const pw=S.sync.pw||"";if(!pw)return;
+  const r=await mergePull(pw);
+  if(r&&r.merged>0){recalcStockFromLog();save();
+    LAST_SYNC_MSG=`☁️ 自动同步: 从云端并入 ${r.merged} 笔记录(已重算库存)`;LAST_SYNC_ERR=false;
+    const el=document.getElementById("sync_msg");if(el)el.innerHTML=`<div class="hint" style="color:#2E7D32">${LAST_SYNC_MSG}</div>`;
+    await doPush(true);render()}}
+async function syncUp(){ // 手动上传(旧入口保留)
+  try{await doPush(false)}
+  catch(e){syncMsg("❌ "+e.message,true)}}
+async function syncDown(){ // 手动下载=整包覆盖(旧入口保留, 大搬家时用)
   try{
     if(!S.sync||!S.sync.token){syncMsg("请先填入同步令牌",true);return}
     const pw=document.getElementById("sync_pw").value;
@@ -645,8 +700,11 @@ function vBak(){
   ${sc.token?`<div style="margin-bottom:6px"><span class="tag s">● 已配置</span> ${sc.lastUp?`上次上传 ${new Date(sc.lastUp).toLocaleString("zh-CN",{hour12:false})}`:"尚未上传"} ${sc.lastDown?` · 上次下载 ${new Date(sc.lastDown).toLocaleString("zh-CN",{hour12:false})}`:""}</div>`:`<div class="hint" style="margin-bottom:6px">首次使用: 在 GitHub 网页登录后打开 <b>github.com/settings/tokens/new</b> → 勾选 <b>repo</b> 权限 → 生成令牌并复制(ghp_开头, 只显示一次)。这是您设备的"同步钥匙"。</div>`}
   ${sc.token?"":`<form onsubmit="syncSetup(event)"><div class="field"><label>同步令牌(ghp_开头)</label><input type="password" name="token" placeholder="粘贴 GitHub 令牌" required></div><button class="go">保存令牌</button></form>`}
   ${sc.token?`
-  <div class="field"><label>加密密码(两台设备必须一致)</label><input type="password" id="sync_pw" placeholder="上传/解开账本用的密码"></div>
-  <div style="display:flex;gap:8px"><button class="go" onclick="syncUp()">⬆️ 上传到云端</button><button class="mini" onclick="syncDown()">⬇️ 下载同步</button></div>`:""}
+  <div class="field"><label>加密密码(两台设备必须一致)</label><input type="password" id="sync_pw" value="${sc.pw||""}" placeholder="上传/解开账本用的密码"></div>
+  <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:6px">
+    <label style="display:flex;align-items:center;gap:4px"><input type="checkbox" id="sync_auto" ${sc.auto?"checked":""} onchange="syncAutoToggle(this.checked)"> 自动同步(记账即传, 打开即收)</label>
+  </div>
+  <div style="display:flex;gap:8px"><button class="go" onclick="syncUp()">⬆️ 立即上传</button><button class="mini" onclick="syncDown()">⬇️ 整包覆盖(搬家用)</button><button class="mini" onclick="syncMergeNow()">⬇️⬆️ 拉取合并</button></div>`:""}
   <div id="sync_msg">${LAST_SYNC_MSG?`<div class="hint" style="color:${LAST_SYNC_ERR?'#B3261E':'#2E7D32'}">${LAST_SYNC_MSG}</div>`:""}</div>
   <div class="hint">账本先用密码加密再上传, 云端私库只有乱码。用法: 老设备「上传」→ 新设备「下载」; 平时哪台记完传一次。令牌只存本机, 清缓存后需重填一次。手机号都不用注册——GitHub 账号咱已经有了。</div></section>`;
   return syncHtml+`<section class="panel"><h2>📤 导出备份</h2>
@@ -664,12 +722,12 @@ function vBak(){
 
 // ================= 增删 =================
 function fd(f){const o={};new FormData(f).forEach((v,k)=>{if(k.endsWith("_c"))return;o[k]=typeof v==="string"?v.trim():v});f.querySelectorAll("select").forEach(s=>{if(s.value==="__custom__"){const c=f.querySelector(`[name="${s.name}_c"]`);o[s.name]=c&&c.value.trim()?c.value.trim():""}delete o[s.name+"_c"]});return o}
-function addFlock(e){e.preventDefault();const d=fd(e.target);S.flock.push({id:uid(),...d,qty:+d.qty});save();render()}
-function addFeed(e){e.preventDefault();const d=fd(e.target);const u=FEED_UNITS.find(x=>x[0]===d.unit);const jin=r2(+d.qty*(u?u[1]:1));const out=d.dir.startsWith("出");S.feedStock[d.item]=(S.feedStock[d.item]||0)+(out?-jin:jin);if(S.feedStock[d.item]<0&&!confirm(`${d.item}库存将变为${S.feedStock[d.item]}斤(负数, 可能漏记了入库), 仍要继续吗?`)){S.feedStock[d.item]+=out?jin:-jin;return}S.feedLog.push({id:uid(),date:d.date,item:d.item,dir:d.dir,qty:+d.qty,unit:d.unit||"斤",jin,price:d.price,note:d.note});save();render()}
-function addFin(e){e.preventDefault();const d=fd(e.target);S.finance.push({id:uid(),...d,amount:r2(+d.amount)});save();render()}
-function addSale(e){e.preventDefault();const d=fd(e.target);S.sales.push({id:uid(),...d,qty:+d.qty,price:+d.price});save();render()}
-function addVax(e){e.preventDefault();const d=fd(e.target);S.vaccines.push({id:uid(),...d});save();render()}
-function delRow(arr,id){if(!confirm("删除这条记录?"))return;S[arr]=S[arr].filter(r=>r.id!==id);save();render()}
+function addFlock(e){e.preventDefault();const d=fd(e.target);S.flock.push({id:uid(),...d,qty:+d.qty});touchSave();render()}
+function addFeed(e){e.preventDefault();const d=fd(e.target);const u=FEED_UNITS.find(x=>x[0]===d.unit);const jin=r2(+d.qty*(u?u[1]:1));const out=d.dir.startsWith("出");S.feedStock[d.item]=(S.feedStock[d.item]||0)+(out?-jin:jin);if(S.feedStock[d.item]<0&&!confirm(`${d.item}库存将变为${S.feedStock[d.item]}斤(负数, 可能漏记了入库), 仍要继续吗?`)){S.feedStock[d.item]+=out?jin:-jin;return}S.feedLog.push({id:uid(),date:d.date,item:d.item,dir:d.dir,qty:+d.qty,unit:d.unit||"斤",jin,price:d.price,note:d.note});touchSave();render()}
+function addFin(e){e.preventDefault();const d=fd(e.target);S.finance.push({id:uid(),...d,amount:r2(+d.amount)});touchSave();render()}
+function addSale(e){e.preventDefault();const d=fd(e.target);S.sales.push({id:uid(),...d,qty:+d.qty,price:+d.price});touchSave();render()}
+function addVax(e){e.preventDefault();const d=fd(e.target);S.vaccines.push({id:uid(),...d});touchSave();render()}
+function delRow(arr,id){if(!confirm("删除这条记录?"))return;S[arr]=S[arr].filter(r=>r.id!==id);touchSave();render()}
 function exportData(silent){const blob=new Blob([JSON.stringify(S,null,2)],{type:"application/json"});const a=document.createElement("a");a.href=URL.createObjectURL(blob);a.download=`蛋小固管家备份_${today()}.json`;if(silent)return;a.click()}
 function importData(e){const f=e.target.files[0];if(!f)return;const rd=new FileReader();rd.onload=()=>{try{const d=JSON.parse(rd.result);if(!confirm("导入将覆盖当前数据, 继续?"))return;S=Object.assign(JSON.parse(JSON.stringify(EMPTY)),d);save();location.reload()}catch(err){alert("文件不是有效备份: "+err.message)}};rd.readAsText(f)}
 function afterRender(){}
