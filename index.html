@@ -101,7 +101,7 @@
 "use strict";
 // ================= 数据层 =================
 const KEY="eggxiaogu_data_v1";   // 与旧版同key, 已记数据自动兼容
-const EMPTY={flock:[],feedStock:{},feedLog:[],finance:[],sales:[],vaccines:[],plan:{},auth:{}};
+const EMPTY={flock:[],feedStock:{},feedLog:[],finance:[],sales:[],vaccines:[],plan:{},auth:{},recipe:null,consume:{}};
 let S=load();
 function load(){try{const r=localStorage.getItem(KEY);return r?Object.assign(JSON.parse(JSON.stringify(EMPTY)),JSON.parse(r)):JSON.parse(JSON.stringify(EMPTY))}catch(e){return JSON.parse(JSON.stringify(EMPTY))}}
 function save(){localStorage.setItem(KEY,JSON.stringify(S))}
@@ -231,7 +231,7 @@ function loginScreen(msg){document.getElementById("main").innerHTML=`<div style=
     <div class="hint" style="text-align:left;margin-top:14px">密码只存本机, 密保答案也只存本机(散列)。${hasAuth()?"忘了密码点「忘记密码」答密保题即可重设, 账本不动。":"密保问题用于日后忘密码找回, 务必填一个忘不了的答案。"}</div>
   </section></div>`;
   document.getElementById("nav").style.display="none"}
-function bootApp(){document.getElementById("nav").style.display="";render()}
+function bootApp(){backfillConsume();document.getElementById("nav").style.display="";render()}
 
 // ================= 框架 =================
 const TABS=["dash","flock","feed","finance","sales","vax","plan","stat","bak"];
@@ -244,7 +244,47 @@ function render(){const m=document.getElementById("main");m.innerHTML=({dash:vDa
 function stockCount(){return S.flock.reduce((a,r)=>a+r.qty,0)}
 function monthSum(list,dateKey,amtFn,m){return list.filter(r=>monthOf(r[dateKey])===m).reduce((a,r)=>a+(amtFn?amtFn(r):r.amount),0)}
 function salesAmt(r){return r2(r.qty*r.price)}
-function lowFeed(){return Object.entries(S.feedStock).filter(([k,v])=>v<=100).map(([k])=>k)}
+function lowFeed(){const R=recipeGet();if(R.total>0&&R.rows.length){const ia=invAlerts().filter(a=>a.lvl==="r").map(a=>a.txt.split(" ")[0]);if(ia.length)return ia}return Object.entries(S.feedStock).filter(([k,v])=>v<=100).map(([k])=>k)}
+// ================= 混合料配方 + 每日自动消耗 =================
+// recipe = {total:每日总耗(斤), rows:[{item,pct}], per:每只日耗(两/只, 仅展示), enabled:true}
+function recipeGet(){if(!S.recipe)S.recipe={total:0,rows:[],enabled:true};if(!S.recipe.rows)S.recipe.rows=[];return S.recipe}
+function saveRecipe(e){e.preventDefault();const d=fd(e.target);const t=+d.total;
+  if(!(t>0)){alert("每日总耗料要大于0");return}
+  const rows=[];for(let i=0;i<12;i++){const it=d["ri"+i],pc=+d["rp"+i];if(it&&pc>0)rows.push({item:it,pct:pc})}
+  const sum=rows.reduce((a,r)=>a+r.pct,0);
+  if(!rows.length){alert("至少填一行品种");return}
+  if(Math.abs(sum-100)>0.5&&!confirm(`品种占比合计 ${sum}%, 不是100%, 仍要保存吗?(系统会按比例折算)`))return;
+  rows.forEach(r=>r.pct=r.pct/sum*100);
+  S.recipe={total:t,rows,per:+d.per||r2(t/stockCount()*10),enabled:true};save();render()}
+function recipeToggle(){S.recipe.enabled=!S.recipe.enabled;save();render()}
+function runConsume(){ // 手动"记今日消耗"(补记/重记今日; 自动消耗在启动时做)
+  const R=recipeGet();if(!R.enabled||!(R.total>0)||!R.rows.length){alert("请先设置配方并启用");return}
+  consumeDay(today(),true);render()}
+function consumeDay(day,force){ // 把 day 的消耗折成一组出库流水(当日已有则跳过, force 则先撤旧)
+  const R=recipeGet();if(!(R.total>0)||!R.rows.length)return false;
+  const old=S.feedLog.filter(r=>r.auto&&r.date===day);
+  if(old.length){if(!force)return false;old.forEach(r=>{S.feedStock[r.item]=r2((S.feedStock[r.item]||0)+r.jin)});
+    S.feedLog=S.feedLog.filter(r=>!(r.auto&&r.date===day))}
+  const tag=`自动消耗 ${day.slice(5).replace("-","/")}`;
+  R.rows.forEach(row=>{const jin=r2(R.total*row.pct/100);if(jin<=0)return;
+    S.feedStock[row.item]=r2((S.feedStock[row.item]||0)-jin);
+    S.feedLog.push({id:uid(),date:day,item:row.item,dir:"出库(饲喂)",qty:jin,unit:"斤",jin,auto:true,note:tag})});
+  S.consume[day]=true;save();return true}
+function backfillConsume(){ // 启动时补齐上次用到今天的每日消耗(每次打开最多补7天, 再久提示手动核)
+  const R=recipeGet();if(!S.recipe||!R.enabled||!(R.total>0)||!R.rows.length)return;
+  const days=[];const d=new Date();
+  for(let i=0;i<7;i++){const ds=d.toISOString().slice(0,10);if(!S.consume[ds])days.push(ds);d.setDate(d.getDate()-1)}
+  days.reverse().forEach(day=>consumeDay(day,false))}
+function feedInv(){ // 库存盘查: 每品种库存/日耗/可撑天数
+  const R=recipeGet();const daily={};R.rows.forEach(r=>daily[r.item]=R.total*r.pct/100);
+  const items=new Set([...Object.keys(S.feedStock),...Object.keys(daily)]);
+  return [...items].map(k=>{const st=S.feedStock[k]||0,d=daily[k]||0;
+    const days=d>0?Math.floor(st/d*10)/10:null;
+    return {item:k,st,daily:d,days}})}
+function invAlerts(){return feedInv().filter(x=>x.daily>0).map(x=>{if(x.days===null)return null;
+  if(x.days<0)return {lvl:"r",txt:`${x.item} 已透支 ${fmt(Math.abs(x.st))} 斤(库存为负, 该入库了)`};
+  if(x.days<=3)return {lvl:"r",txt:`${x.item} 仅够 ${x.days<1?"不足1":x.days} 天(${fmt(x.st)}斤)`};
+  if(x.days<=7)return {lvl:"w",txt:`${x.item} 约 ${x.days} 天(${fmt(x.st)}斤)`};return null}).filter(Boolean)}
 function vaxAlerts(){const out=[];const t=today();
   // 来自免疫计划的待办: 未勾选且日期已进入7天窗口或已过期
   if(S.plan&&S.plan.start){for(const it of VAX_PLAN){if(S.plan.done&&S.plan.done.includes(it.d))continue;const due=addDays(S.plan.start,it.d);if(due<=addDays(t,7))out.push({name:it.name,due,lvl:due<t?"w":"s",txt:`${due<t?"已过期":"计划"} ${due} · ${it.name}(${it.d}日龄)`})}}
@@ -300,7 +340,30 @@ function flockTable(){if(!S.flock.length)return `<div class="empty">还没有记
   return `<table><tr><th>日期</th><th>类型</th><th>鸡舍</th><th>数量</th><th>备注</th><th></th></tr>${rows}<tr><td colspan="3"><b>当前存栏合计</b></td><td class="money"><b>${stockCount()}</b></td><td colspan="2"></td></tr></table>`}
 
 function vFeed(){
-  return `<section class="panel"><h2>➕ 物料出入库</h2>
+  const R=recipeGet();const stock=stockCount();
+  const inv=feedInv();const ia=invAlerts();
+  const dc=x=>x.days===null?"":x.days<0?`<span class="tag r">已透支</span>`:x.days<=3?`<span class="tag r">仅够${x.days<1?"不足1":x.days}天</span>`:x.days<=7?`<span class="tag w">约${x.days}天</span>`:`<span style="color:#2E7D32;font-size:12px">够${x.days}天</span>`;
+  const invRows=inv.map(x=>{
+    return `<tr><td>${x.item}</td><td class="money ${x.st<0?'neg':''}">${fmt(x.st)}斤</td><td class="money">${x.daily?fmt(r2(x.daily))+"斤/天":"—"}</td><td>${dc(x)}</td></tr>`}).join("");
+  const rRows=R.rows.map((r,i)=>`<tr><td><input name="ri${i}" list="feed_items_dl" value="${r.item}" style="width:90px"></td><td><input name="rp${i}" type="number" step="0.1" value="${Math.round(r.pct*10)/10}" style="width:70px">%</td></tr>`).join("");
+  const recipeHtml=`
+  <section class="panel"><h2>🧮 混合料配方(每日自动出库)</h2>
+  ${R.total>0?`<div style="margin-bottom:8px"><span class="tag ${R.enabled?'s':'w'}">${R.enabled?"● 启用中":"⏸ 已停用"}</span> 每日 <b>${fmt(R.total)}</b> 斤${R.per?` · 折合 <b>${R.per}</b> 两/只·天(存栏${fmt(stock)}只)`:""} <button class="mini" onclick="recipeToggle()">${R.enabled?"停用":"启用"}</button></div>`:""}
+  <form onsubmit="saveRecipe(event)">
+    <div class="field"><label>每日总耗料(斤)</label><input type="number" step="0.01" name="total" value="${R.total||""}" placeholder="如 2200" required></div>
+    <div class="field"><label>每只日耗(两/只, 可不填)</label><input type="number" step="0.01" name="per" value="${R.per||""}" placeholder="如 2.2, 填了只作参考显示"></div>
+    <table style="margin:4px 0"><tr><th>品种</th><th>占比</th></tr>
+      ${rRows||`<tr><td><input name="ri0" list="feed_items_dl" placeholder="玉米" style="width:90px"></td><td><input name="rp0" type="number" step="0.1" placeholder="62" style="width:70px">%</td></tr><tr><td><input name="ri1" list="feed_items_dl" placeholder="豆粕" style="width:90px"></td><td><input name="rp1" type="number" step="0.1" placeholder="24" style="width:70px">%</td></tr><tr><td><input name="ri2" list="feed_items_dl" placeholder="麸皮" style="width:90px"></td><td><input name="rp2" type="number" step="0.1" placeholder="14" style="width:70px">%</td></tr>`}
+    </table>
+    <datalist id="feed_items_dl">${FEED_ITEMS.map(i=>`<option value="${i}">`).join("")}</datalist>
+    <button class="go">保存配方</button>
+  </form>
+  <div class="hint">设好后, 每天消耗自动出库(打开App时补记, 最多补7天)。上栏量变了改「每日总耗料」就行, 不用天天登记。消耗明细在下方流水里带「自动消耗」标。</div></section>
+  <section class="panel"><h2>📊 库存盘查(入库 − 消耗 = 现有)</h2>
+    ${ia.length?ia.map(a=>`<div style="margin:4px 0"><span class="tag ${a.lvl}">${a.lvl==="r"?"🔴 急补":"🟡 该进料"}</span> ${a.txt}</div>`).join(""):""}
+    <table><tr><th>品种</th><th>现有库存</th><th>日耗</th><th>可撑</th></tr>${invRows||`<tr><td class="empty">暂无</td></tr>`}</table>
+    <div class="hint">黄牌=够吃7天内, 红牌=3天内, 该备料了。库存为负=漏记入库。</div></section>`;
+  return recipeHtml+`<section class="panel"><h2>➕ 物料出入库</h2>
   <form onsubmit="addFeed(event)">
     <div class="field"><label>日期</label><input type="date" name="date" value="${today()}" required></div>
     <div class="field"><label>物料名</label>${smartField('item',FEED_ITEMS)}</div>
